@@ -12,7 +12,7 @@ import {
   Arn,
   ArnFormat,
 } from 'aws-cdk-lib';
-import { UserData } from 'aws-cdk-lib/lib/aws-ec2';
+import { UserData } from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 import { constants } from './constants';
 import { SSMParameterReader } from './ssm-parameter-reader';
@@ -250,7 +250,7 @@ export class MinecraftStack extends Stack {
       {
         containerName: constants.WATCHDOG_SERVER_CONTAINER_NAME,
         image: ecs.ContainerImage.fromRegistry(
-          'yurisasc/minecraft-ecsfargate-watchdog'
+          'j1mmie/minecraft-ecsfargate-watchdog'
         ),
         essential: true,
         taskDefinition: taskDefinition,
