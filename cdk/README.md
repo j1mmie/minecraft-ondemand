@@ -28,7 +28,7 @@ Linux friends should be able to adapt this to their needs.
 Open the a command prompt shell (perhaps the new "Node.js command prompt" icon in your start menu) and clone the `minecraft-ondemand` GitHub repository.
 
 ```bash
-git clone https://github.com/doctorray117/minecraft-ondemand.git
+git clone https://github.com/j1mmie/minecraft-ondemand.git
 ```
 
 ### 2. Change to the CDK directory, create the environment file, and open it in an editor
@@ -36,8 +36,7 @@ git clone https://github.com/doctorray117/minecraft-ondemand.git
 ```bash
 cd minecraft-ondemand
 cd cdk
-copy .env.sample .env
-notepad .env
+notepad config.yml
 ```
 (replace `notepad` with your favorite text editor)
 
@@ -56,7 +55,13 @@ All of the subsequent steps assume you are running from a terminal/command promp
 Build and deploy the solution by running:
 
 ```bash
-npm run build && npm run deploy
+npm run bootstrap -- --profile my-aws-profile-name
+```
+
+Confirm everything worked. Then run
+
+```bash
+npm run deploy -- --profile my-aws-profile-name
 ```
 
 You may be asked to install a package like aws-cdk, this is fine to say yes to.  The full deployment will take a few minutes.
@@ -67,8 +72,8 @@ After you've launched your minecraft server the first time and you've waited for
 
 ## Additional Configuration
 
-Configuration values can all be passed in as environment variables or by using a 
-`.env` file created from [`.env.sample`](./.env.sample). 
+Configuration values can all be passed in as environment variables or by using a
+`.env` file created from [`.env.sample`](./.env.sample).
 
 **Note:** Environment variables will take precedence over configuration values
 set in `.env`.
@@ -173,6 +178,6 @@ Most CDK destroy failures can be resolved by running it a second time.  Other re
   [Change the DNS servers]: <https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/migrate-dns-domain-inactive.html#migrate-dns-update-domain-inactive>
   [NodeJS]: <https://nodejs.org/en/download/>
   [Git]: <https://git-scm.com/download/win>
-  [Usage and Customization]: <https://github.com/doctorray117/minecraft-ondemand#usage-and-customization>
+  [Usage and Customization]: <https://github.com/j1mmie/minecraft-ondemand#usage-and-customization>
   [minecraft java docker]: https://hub.docker.com/r/itzg/minecraft-server
   [minecraft bedrock docker]: https://hub.docker.com/r/itzg/minecraft-bedrock-server

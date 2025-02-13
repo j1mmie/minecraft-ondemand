@@ -1,18 +1,18 @@
 #!/usr/bin/env node
-import 'source-map-support/register';
-import * as cdk from 'aws-cdk-lib';
-import { MinecraftStack } from '../lib/minecraft-stack';
-import { DomainStack } from '../lib/domain-stack';
-import { constants } from '../lib/constants';
-import { resolveConfig } from '../lib/config';
+import 'source-map-support/register'
+import * as cdk from 'aws-cdk-lib'
+import { MinecraftStack } from '../lib/minecraft-stack'
+import { DomainStack } from '../lib/domain-stack'
+import { constants } from '../lib/constants'
+import { resolveConfig } from '../lib/config'
 
-const app = new cdk.App();
+const app = new cdk.App()
 
-const config = resolveConfig();
+const config = resolveConfig()
 
 if (!config.domainName) {
-  throw new Error('Missing required `DOMAIN_NAME` in .env file, please rename\
-    `.env.sample` to `.env` and add your domain name.');
+  throw new Error('Missing required `domainName` in config.yml file, please rename\
+    set `domainName` in config.yml.');
 }
 
 const domainStack = new DomainStack(app, 'minecraft-domain-stack', {

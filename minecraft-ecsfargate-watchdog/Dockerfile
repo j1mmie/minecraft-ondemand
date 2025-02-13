@@ -1,5 +1,5 @@
 # version 1.2.0
-# docker pull doctorray/minecraft-ecsfargate-watchdog
+# docker pull j1mmie/minecraft-ecsfargate-watchdog
 
 FROM amazon/aws-cli
 

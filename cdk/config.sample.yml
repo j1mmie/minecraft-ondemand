@@ -1,0 +1,34 @@
+# Required
+domainName: j1mmie.click
+
+extraUdpPorts:
+ - 19132
+extraTcpPorts:
+ - 57475
+
+serverEnvironment:
+  EULA: true
+  TYPE: fabric
+  DIFFICULTY: normal
+  MOTD: Fabric + Geyser Server
+  MODE: survival
+  MEMORY: "10G"
+  USE_AIKAR_FLAGS: "true"
+  MODS:
+    - https://cdn.modrinth.com/data/P7dR8mSH/versions/3WOjLgFJ/fabric-api-0.116.1+1.21.4.jar               # Enables other mods to run
+    - https://cdn.modrinth.com/data/gvQqBUqZ/versions/QCuodIia/lithium-fabric-0.14.7%2Bmc1.21.4.jar        # Optimizes server performance
+    - https://cdn.modrinth.com/data/wKkoqHrH/versions/k1yrvt1h/geyser-fabric-Geyser-Fabric-2.6.1-b758.jar  # Allows Bedrock players to join
+    - https://cdn.modrinth.com/data/bWrNNfkb/versions/nyg969vQ/Floodgate-Fabric-2.2.4-b43.jar              # Allows Bedrock players to join with Java accounts
+    - https://cdn.modrinth.com/data/vglM5uIj/versions/jgiZV0gE/watchpup-fabric-0.0.1.jar                   # Provides server activity information to watchdog
+
+# Optional
+subdomainPart:   mc
+serverRegion:    us-west-1
+startupMinutes:  10
+shutdownMinutes: 20
+useFargateSpot:  true
+taskMemory:      12288
+taskCpu:         2048
+
+# Advanced
+debug: true

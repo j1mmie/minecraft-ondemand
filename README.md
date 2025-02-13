@@ -372,7 +372,7 @@ Under `Advanced container configuration` make these changes:
 Click `Add` and then click `Add container` again to add a second container to the list. Use defaults except for these specifics:
 
 - Container name: `minecraft-ecsfargate-watchdog`
-- Image: `doctorray/minecraft-ecsfargate-watchdog` (source for this container within this project if you want to build/host it yourself)
+- Image: [j1mmie/minecraft-ecsfargate-watchdog](https://hub.docker.com/r/j1mmie/minecraft-ecsfargate-watchdog) (source for this container within this project if you want to build/host it yourself)
 
 Under `Advanced container configuration` make these changes:
 

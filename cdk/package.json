@@ -6,23 +6,27 @@
   },
   "scripts": {
     "prebuild": "npm ci",
-    "build": "npx aws-cdk bootstrap",
+    "bootstrap": "npx aws-cdk bootstrap",
     "deploy": "npx aws-cdk deploy --all",
     "destroy": "npx aws-cdk destroy --all",
+    "rollback": "npx aws-cdk rollback CDKToolkit",
     "typecheck": "tsc --noEmit --watch",
     "diff": "npx aws-cdk diff"
   },
   "devDependencies": {
     "@types/jest": "^26.0.10",
     "@types/node": "10.17.27",
-    "dotenv": "^10.0.0",
     "ts-node": "^9.0.0",
     "typescript": "~3.9.7"
   },
   "dependencies": {
+    "aws-cdk": "^2.178.2",
     "aws-cdk-lib": "^2.89.0",
     "constructs": "^10.0.0",
     "execa": "^5.1.1",
-    "source-map-support": "^0.5.16"
+    "source-map-support": "^0.5.16",
+    "yaml": "^2.7.0",
+    "zod": "^3.24.2",
+    "zod-validation-error": "^3.4.0"
   }
 }

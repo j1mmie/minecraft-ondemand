@@ -1,4 +1,35 @@
-#!/bin/bash
+#!/bin/sh
+
+if [ -n "$MOCK" ]; then
+  echo "Mock mode enabled"
+
+  CLUSTER="minecraft"
+  SERVICE="minecraft"
+  SERVERNAME="minecraft.example.com"
+  DNSZONE="mocked-dns-zone"
+  ECS_CONTAINER_METADATA_URI_V4="mock://null"
+
+  #function
+  aws() {
+    if [ "$1" = "ecs" ] && [ "$2" = "update-service" ]; then
+      echo "Setting desired task count to zero."
+    elif [ "$1" = "ecs" ] && [ "$2" = "describe-tasks" ]; then
+      echo '{ "tasks": [{ "attachments": [{ "details": [{ "name": "networkInterfaceId", "value": "eni-mocked-network-id" }] }] }] }'
+    elif [ "$1" = "ec2" ] && [ "$2" = "describe-network-interfaces" ]; then
+      echo '{ "NetworkInterfaces": [{ "Association": { "PublicIp": "0.0.0.0" } }] }'
+    fi
+  }
+
+  curl() {
+    if [ "$2" = "mock://null/task" ]; then
+      echo '{"TaskARN": "arn:aws:ecs:us-west-2:123456789012:task/minecraft/mocked-task-id"}'
+    else
+      # Forward the request to actual curl
+      /usr/bin/curl "$@"
+    fi
+  }
+
+fi
 
 ## Required Environment Variables
 
@@ -6,51 +37,195 @@
 [ -n "$SERVICE" ] || { echo "SERVICE env variable must be set to the name of the service in the $CLUSTER cluster" ; exit 1; }
 [ -n "$SERVERNAME" ] || { echo "SERVERNAME env variable must be set to the full A record in Route53 we are updating" ; exit 1; }
 [ -n "$DNSZONE" ] || { echo "DNSZONE env variable must be set to the Route53 Hosted Zone ID" ; exit 1; }
+
+## Optional Environment Variables
+
 [ -n "$STARTUPMIN" ] || { echo "STARTUPMIN env variable not set, defaulting to a 10 minute startup wait" ; STARTUPMIN=10; }
 [ -n "$SHUTDOWNMIN" ] || { echo "SHUTDOWNMIN env variable not set, defaulting to a 20 minute shutdown wait" ; SHUTDOWNMIN=20; }
+[ -n "$STATSPORT" ] || { echo "STATSPORT env variable not set, defaulting to 57475" ; STATSPORT=57475; }
+[ -n "$POLL_FREQ_SECS" ] || { echo "POLL_FREQ_SECS env variable not set, defaulting to 60" ; POLL_FREQ_SECS=60; }
 
-function send_notification ()
-{
-  [ "$1" = "startup" ] && MESSAGETEXT="${SERVICE} is online at ${SERVERNAME}"
-  [ "$1" = "shutdown" ] && MESSAGETEXT="Shutting down ${SERVICE} at ${SERVERNAME}"
+#function
+maybe_call_discord_webhooks() {
+  if [ -z "$DISCORDWEBHOOKS" ]; then
+    echo "No Discord webhook set, skipping Discord notification"
+    return
+  fi
 
-  ## Twilio Option
-  [ -n "$TWILIOFROM" ] && [ -n "$TWILIOTO" ] && [ -n "$TWILIOAID" ] && [ -n "$TWILIOAUTH" ] && \
-  echo "Twilio information set, sending $1 message" && \
+  MODE="$1"
+  REASON="$2"
+
+  DISCORD_JSON=""
+
+  if [ "$MODE" = "startup" ]; then
+    DISCORD_JSON="{
+      \"content\": null,
+      \"embeds\": [
+        {
+          \"title\": \"🟢 Minecraft Server Started\",
+          \"description\": \"Host: \`$SERVERNAME\`\",
+          \"color\": null
+        }
+      ],
+      \"attachments\": []
+    }"
+  elif [ "$MODE" = "shutdown" ]; then
+    DISCORD_JSON="{
+      \"content\": null,
+      \"embeds\": [{
+          \"title\": \"🔴 Minecraft Server Stopped\",
+          \"description\": \"Shut down because ${REASON}\",
+          \"color\": null
+      }],
+      \"attachments\": []
+    }"
+  fi
+
+  IFS=','
+
+  for DISCORDWEBHOOK in $DISCORDWEBHOOKS; do
+    if [ -n "$DISCORDWEBHOOK" ]; then
+      echo "Discord webhook set, sending $1 message"
+      curl --silent -X POST -H "Content-Type: application/json" -d "$DISCORD_JSON" "$DISCORDWEBHOOK"
+    fi
+  done
+
+  unset IFS # Restore the default IFS
+}
+
+#function
+get_simple_notif_message() {
+  MODE="$1"
+  REASON="$2"
+
+  MESSAGETEXT=""
+  if [ "$MODE" = "startup" ]; then
+    MESSAGETEXT="Minecraft server is online at ${SERVERNAME}"
+  elif [ "$MODE" = "shutdown" ]; then
+    MESSAGETEXT="Shutting down ${SERVICE} at ${SERVERNAME}"
+  fi
+
+  echo "$MESSAGETEXT"
+}
+
+#function
+maybe_send_twilio_notifs() {
+  if [ -z "$TWILIOFROM" ] || [ -z "$TWILIOTO" ] || [ -z "$TWILIOAID" ] || [ -z "$TWILIOAUTH" ]; then
+    echo "Twilio information not set, skipping Twilio notification"
+    return
+  fi
+
+  MODE="$1"
+  REASON="$2"
+
+  MESSAGETEXT=$(get_simple_notif_message "$MODE" "$REASON")
+
+  echo "Twilio information set, sending $MODE message"
   curl --silent -XPOST -d "Body=$MESSAGETEXT" -d "From=$TWILIOFROM" -d "To=$TWILIOTO" "https://api.twilio.com/2010-04-01/Accounts/$TWILIOAID/Messages" -u "$TWILIOAID:$TWILIOAUTH"
+}
 
-  ## SNS Option
-  [ -n "$SNSTOPIC" ] && \
-  echo "SNS topic set, sending $1 message" && \
+#function
+maybe_publish_sns_topic() {
+  if [ -z "$SNSTOPIC" ]; then
+    echo "SNS topic not set, skipping SNS notification"
+    return
+  fi
+
+  MODE="$1"
+  REASON="$2"
+
+  MESSAGETEXT=$(get_simple_notif_message "$MODE" "$REASON")
+
+  echo "SNS topic set, sending $MODE message"
   aws sns publish --topic-arn "$SNSTOPIC" --message "$MESSAGETEXT"
 }
 
-function zero_service ()
-{
-  send_notification shutdown
+#function
+send_notifications() {
+  MODE="$1"
+  REASON="$2"
+
+  maybe_call_discord_webhooks "$MODE" "$REASON"
+  maybe_send_twilio_notifs "$MODE" "$REASON"
+  maybe_publish_sns_topic "$MODE" "$REASON"
+}
+
+zero_service_and_exit() {
+  REASON="$1"
+  send_notifications shutdown "$REASON"
   echo Setting desired task count to zero.
-  aws ecs update-service --cluster $CLUSTER --service $SERVICE --desired-count 0
+  aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 0
   exit 0
 }
 
-function sigterm ()
-{
+#function
+get_active_connection_count() {
+  curl --silent -m 10 "http://localhost:$STATSPORT"
+}
+
+#function
+is_valid_connection_value() {
+  # if [[ $1 =~ ^[0-9]+$ ]]; then
+  #   return 0
+  # else
+  #   return 1
+  # fi
+
+  # Check if the value is a number in POSIX compliant way
+  case $1 in
+    ''|*[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+#function
+wait_for_next_poll() {
+  ## Sleep in increments of 1s so that we can catch a SIGTERM if needed
+
+  SLEEPLOOP=0
+  while [ $SLEEPLOOP -lt "$POLL_FREQ_SECS" ]; do
+    sleep 1
+    SLEEPLOOP=$((SLEEPLOOP + 1))
+  done
+}
+
+#function
+get_task() {
+  curl -s "${ECS_CONTAINER_METADATA_URI_V4}/task" | jq -r '.TaskARN' | awk -F/ '{ print $NF }'
+}
+
+#function
+get_minute_of_poll() {
+  # Given a poll count and poll frequency, return the minute of the poll
+  # rounded down to the nearest minute
+  POLL_COUNT="$1"
+  POLL_FREQ_SECS="$2"
+
+  echo "$((POLL_COUNT * POLL_FREQ_SECS / 60))"
+
+
+}
+
+#shellcheck disable=SC2317 # Only applies to this function
+#function
+sigterm() {
   ## upon SIGTERM set the service desired count to zero
   echo "Received SIGTERM, terminating task..."
-  zero_service
+  zero_service_and_exit "SIGTERM received"
 }
-trap sigterm SIGTERM
+
+trap sigterm TERM
 
 ## get task id from the Fargate metadata
-TASK=$(curl -s ${ECS_CONTAINER_METADATA_URI_V4}/task | jq -r '.TaskARN' | awk -F/ '{ print $NF }')
-echo I believe our task id is $TASK
+TASK=$(get_task)
+echo "I believe our task id is $TASK"
 
 ## get eni from from ECS
-ENI=$(aws ecs describe-tasks --cluster $CLUSTER --tasks $TASK --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value | [0]" --output text)
-echo I believe our eni is $ENI
+ENI=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value | [0]" --output text)
+echo "I believe our eni is $ENI"
 
 ## get public ip address from EC2
-PUBLICIP=$(aws ec2 describe-network-interfaces --network-interface-ids $ENI --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
+PUBLICIP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI" --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
 echo "I believe our public IP address is $PUBLICIP"
 
 ## update public dns record
@@ -76,97 +251,75 @@ cat << EOF >> minecraft-dns.json
   ]
 }
 EOF
-aws route53 change-resource-record-sets --hosted-zone-id $DNSZONE --change-batch file://minecraft-dns.json
 
-## detemine java or bedrock based on listening port
-echo "Determining Minecraft edition based on listening port..."
-echo "If we are stuck here, the minecraft container probably failed to start.  Waiting 10 minutes just in case..."
-COUNTER=0
-while true
-do
-  netstat -atn | grep :25565 | grep LISTEN && EDITION="java" && break
-  netstat -aun | grep :19132 && EDITION="bedrock" && break
-  sleep 1
-  COUNTER=$(($COUNTER + 1))
-  if [ $COUNTER -gt 600 ] ## server has not been detected as starting within 10 minutes
-  then
-    echo 10 minutes elapsed without a minecraft server listening, terminating.
-    zero_service
-  fi
-done
-echo "Detected $EDITION edition"
+aws route53 change-resource-record-sets --hosted-zone-id "$DNSZONE" --change-batch file://minecraft-dns.json
 
-if [ "$EDITION" == "java" ]
-then
-  echo "Waiting for Minecraft RCON to begin listening for connections..."
-  STARTED=0
-  while [ $STARTED -lt 1 ]
-  do
-    CONNECTIONS=$(netstat -atn | grep :25575 | grep LISTEN | wc -l)
-    STARTED=$(($STARTED + $CONNECTIONS))
-    if [ $STARTED -gt 0 ] ## minecraft actively listening, break out of loop
-    then
-      echo "RCON is listening, we are ready for clients."
-      break
-    fi
-    sleep 1
-  done
-fi
+echo "Waiting up to 10 minutes to detect Minecraft WatchPup output..."
 
-if [ "$EDITION" == "bedrock" ]
-then
-  PINGA="\x01" ## uncommitted ping
-  PINGB="\x00\x00\x00\x00\x00\x00\x4e\x20" ## time since start in ms.  20 seconds sounds good
-  PINGC="\x00\xff\xff\x00\xfe\xfe\xfe\xfe\xfd\xfd\xfd\xfd\x12\x34\x56\x78" ## offline message data id
-  PINGD=$(for i in $(seq 1 8); do echo -en "\x5c\x78" ; tr -dc 'a-f0-9' < /dev/urandom | head -c2; done) ## random client guid
-  BEDROCKPING=$PINGA$PINGB$PINGC$PINGD
-  echo "Bedrock ping string is $BEDROCKPING"
-fi
+POLL_COUNT=0
+while true; do
+  PLAYERS_CONNECTED=$(get_active_connection_count)
 
-## Send startup notification message
-send_notification startup
-
-echo "Checking every 1 minute for active connections to Minecraft, up to $STARTUPMIN minutes..."
-COUNTER=0
-CONNECTED=0
-while [ $CONNECTED -lt 1 ]
-do
-  echo Waiting for connection, minute $COUNTER out of $STARTUPMIN...
-  [ "$EDITION" == "java" ] && CONNECTIONS=$(netstat -atn | grep :25565 | grep ESTABLISHED | wc -l)
-  [ "$EDITION" == "bedrock" ] && CONNECTIONS=$((echo -en "$BEDROCKPING" && sleep 1) | ncat -w 1 -u 127.0.0.1 19132 | cut -c34- | awk -F\; '{ print $5 }')
-  [ -n "$CONNECTIONS" ] || CONNECTIONS=0
-  CONNECTED=$(($CONNECTED + $CONNECTIONS))
-  COUNTER=$(($COUNTER + 1))
-  if [ $CONNECTED -gt 0 ] ## at least one active connection detected, break out of loop
-  then
+  if (is_valid_connection_value "$PLAYERS_CONNECTED"); then
+    echo "WatchPup plugin is responding to queries, continuing with monitoring..."
     break
   fi
-  if [ $COUNTER -gt $STARTUPMIN ] ## no one has connected in at least these many minutes
-  then
-    echo $STARTUPMIN minutes exceeded without a connection, terminating.
-    zero_service
+
+  sleep 1
+  POLL_COUNT=$((POLL_COUNT + 1))
+  if [ $POLL_COUNT -gt 600 ]; then ## server has not been detected as starting within 10 minutes
+    echo "Failed to contact WatchPup for 10 minutes straight, terminating."
+    zero_service_and_exit "the server was never detected as having started"
   fi
-  ## only doing short sleeps so that we can catch a SIGTERM if needed
-  for i in $(seq 1 59) ; do sleep 1; done
 done
 
-echo "We believe a connection has been made, switching to shutdown watcher."
-COUNTER=0
-while [ $COUNTER -le $SHUTDOWNMIN ]
-do
-  [ "$EDITION" == "java" ] && CONNECTIONS=$(netstat -atn | grep :25565 | grep ESTABLISHED | wc -l)
-  [ "$EDITION" == "bedrock" ] && CONNECTIONS=$((echo -en "$BEDROCKPING" && sleep 1) | ncat -w 1 -u 127.0.0.1 19132 | cut -c34- | awk -F\; '{ print $5 }')
-  [ -n "$CONNECTIONS" ] || CONNECTIONS=0
-  if [ $CONNECTIONS -lt 1 ]
-  then
-    echo "No active connections detected, $COUNTER out of $SHUTDOWNMIN minutes..."
-    COUNTER=$(($COUNTER + 1))
-  else
-    [ $COUNTER -gt 0 ] && echo "New connections active, zeroing counter."
-    COUNTER=0
+## Send startup notification message
+send_notifications startup
+
+echo "Checking WatchPup every $POLL_FREQ_SECS seconds for active connections to Minecraft, up to $STARTUPMIN minutes..."
+
+MAX_POLL_COUNT=$((STARTUPMIN * 60 / POLL_FREQ_SECS))
+POLL_COUNT=0
+
+PLAYERS_CONNECTED=0
+while [ "$PLAYERS_CONNECTED" -lt 1 ]; do
+  CURRENT_MINUTE=$(get_minute_of_poll "$POLL_COUNT" "$POLL_FREQ_SECS")
+  echo "Waiting for connection, poll $POLL_COUNT / $MAX_POLL_COUNT, minute $CURRENT_MINUTE / $STARTUPMIN..."
+
+  PLAYERS_CONNECTED=$(get_active_connection_count)
+  POLL_COUNT=$((POLL_COUNT + 1))
+  if [ "$PLAYERS_CONNECTED" -gt 0 ]; then ## at least one active connection detected, break out of loop
+    break
   fi
-  for i in $(seq 1 59) ; do sleep 1; done
+
+  if [ $POLL_COUNT -gt "$MAX_POLL_COUNT" ]; then ## no one has connected in at least these many minutes
+    echo "$STARTUPMIN minutes exceeded without a connection, terminating."
+    zero_service_and_exit "no initial connection was detected in $STARTUPMIN minutes"
+  fi
+
+  wait_for_next_poll
 done
+
+echo "Connection detected, switching to shutdown watcher."
+
+MAX_POLL_COUNT=$((SHUTDOWNMIN * 60 / POLL_FREQ_SECS))
+POLL_COUNT=0
+
+while [ $POLL_COUNT -le "$MAX_POLL_COUNT" ]; do
+  CURRENT_MINUTE=$(get_minute_of_poll "$POLL_COUNT" "$POLL_FREQ_SECS")
+  PLAYERS_CONNECTED=$(get_active_connection_count)
+
+  if [ "$PLAYERS_CONNECTED" -lt 1 ]; then
+    echo "No active connections detected, poll $POLL_COUNT / $MAX_POLL_COUNT, minute $CURRENT_MINUTE / $SHUTDOWNMIN..."
+    POLL_COUNT=$((POLL_COUNT + 1))
+  else
+    [ $POLL_COUNT -gt 0 ] && echo "New connections active, zeroing counter."
+    POLL_COUNT=0
+  fi
+
+  wait_for_next_poll
+done
+
 
 echo "$SHUTDOWNMIN minutes elapsed without a connection, terminating."
-zero_service
+zero_service_and_exit "no connections were detected for $SHUTDOWNMIN minutes"

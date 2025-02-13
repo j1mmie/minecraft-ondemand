@@ -17,10 +17,10 @@ import { Construct } from 'constructs';
 import { constants } from './constants';
 import { CWGlobalResourcePolicy } from './cw-global-resource-policy';
 import { RetentionDays } from 'aws-cdk-lib/aws-logs';
-import { StackConfig } from './types';
+import { Config } from './config-schema'
 
 interface DomainStackProps extends StackProps {
-  config: Readonly<StackConfig>;
+  config: Readonly<Config>;
 }
 
 export class DomainStack extends Stack {

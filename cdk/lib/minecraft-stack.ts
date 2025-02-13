@@ -15,12 +15,14 @@ import {
 import { Construct } from 'constructs';
 import { constants } from './constants';
 import { SSMParameterReader } from './ssm-parameter-reader';
-import { StackConfig } from './types';
 import { getMinecraftServerConfig, isDockerInstalled } from './util';
+import { Config } from './config-schema'
 
 interface MinecraftStackProps extends StackProps {
-  config: Readonly<StackConfig>;
+  config: Readonly<Config>;
 }
+
+const watchdogMemoryRequiredMiB = 512;
 
 export class MinecraftStack extends Stack {
   constructor(scope: Construct, id: string, props: MinecraftStackProps) {
@@ -111,15 +113,19 @@ export class MinecraftStack extends Stack {
       }
     );
 
-    const minecraftServerConfig = getMinecraftServerConfig(
-      config.minecraftEdition
-    );
+    const totalMemoryAvailableMiB = config.taskMemory;
+    const minecraftServerMemoryMiB = totalMemoryAvailableMiB - watchdogMemoryRequiredMiB;
+
+    const minecraftServerConfig = getMinecraftServerConfig()
 
     const minecraftServerContainer = new ecs.ContainerDefinition(
       this,
       'ServerContainer',
       {
         containerName: constants.MC_SERVER_CONTAINER_NAME,
+        cpu: 1024,
+        memoryLimitMiB: minecraftServerMemoryMiB,
+        memoryReservationMiB: minecraftServerMemoryMiB - 256,
         image: ecs.ContainerImage.fromRegistry(minecraftServerConfig.image),
         portMappings: [
           {
@@ -127,8 +133,18 @@ export class MinecraftStack extends Stack {
             hostPort: minecraftServerConfig.port,
             protocol: minecraftServerConfig.protocol,
           },
+          ...config.extraTcpPorts.map(port => ({
+            containerPort: port,
+            hostPort: port,
+            protocol: ecs.Protocol.TCP,
+          })),
+          ...config.extraUdpPorts.map(port => ({
+            containerPort: port,
+            hostPort: port,
+            protocol: ecs.Protocol.UDP,
+          })),
         ],
-        environment: config.minecraftImageEnv,
+        environment: config.serverEnvironment,
         essential: false,
         taskDefinition,
         logging: config.debug
@@ -159,6 +175,20 @@ export class MinecraftStack extends Stack {
       ec2.Peer.anyIpv4(),
       minecraftServerConfig.ingressRulePort
     );
+
+    config.extraTcpPorts.forEach(port => {
+      serviceSecurityGroup.addIngressRule(
+        ec2.Peer.anyIpv4(),
+        ec2.Port.tcp(port)
+      );
+    });
+
+    config.extraUdpPorts.forEach(port => {
+      serviceSecurityGroup.addIngressRule(
+        ec2.Peer.anyIpv4(),
+        ec2.Port.udp(port)
+      );
+    });
 
     const minecraftServerService = new ecs.FargateService(
       this,
@@ -218,33 +248,45 @@ export class MinecraftStack extends Stack {
       snsTopicArn = snsTopic.topicArn;
     }
 
+    const watchdogEnv:Record<string, string> = {
+      CLUSTER: constants.CLUSTER_NAME,
+      SERVICE: constants.SERVICE_NAME,
+      DNSZONE: hostedZoneId,
+      SERVERNAME: `${config.subdomainPart}.${config.domainName}`,
+      SNSTOPIC: snsTopicArn,
+      STARTUPMIN: config.startupMinutes.toString(),
+      SHUTDOWNMIN: config.shutdownMinutes.toString(),
+    }
+
+    if (config.discord) {
+      watchdogEnv.DISCORDWEBHOOKS = config.discord.webhookUrls.join(',')
+    }
+
+    if (config.twilio) {
+      watchdogEnv.TWILIOFROM = config.twilio.phoneFrom
+      watchdogEnv.TWILIOTO   = config.twilio.phoneTo
+      watchdogEnv.TWILIOAID  = config.twilio.accountId
+      watchdogEnv.TWILIOAUTH = config.twilio.authCode
+    }
+
     const watchdogContainer = new ecs.ContainerDefinition(
       this,
       'WatchDogContainer',
       {
         containerName: constants.WATCHDOG_SERVER_CONTAINER_NAME,
+        cpu: 1024,
+        memoryLimitMiB: watchdogMemoryRequiredMiB,
+        memoryReservationMiB: watchdogMemoryRequiredMiB - 128,
         image: isDockerInstalled()
           ? ecs.ContainerImage.fromAsset(
               path.resolve(__dirname, '../../minecraft-ecsfargate-watchdog/')
             )
           : ecs.ContainerImage.fromRegistry(
-              'doctorray/minecraft-ecsfargate-watchdog'
+              'j1mmie/minecraft-ecsfargate-watchdog'
             ),
         essential: true,
         taskDefinition: taskDefinition,
-        environment: {
-          CLUSTER: constants.CLUSTER_NAME,
-          SERVICE: constants.SERVICE_NAME,
-          DNSZONE: hostedZoneId,
-          SERVERNAME: `${config.subdomainPart}.${config.domainName}`,
-          SNSTOPIC: snsTopicArn,
-          TWILIOFROM: config.twilio.phoneFrom,
-          TWILIOTO: config.twilio.phoneTo,
-          TWILIOAID: config.twilio.accountId,
-          TWILIOAUTH: config.twilio.authCode,
-          STARTUPMIN: config.startupMinutes,
-          SHUTDOWNMIN: config.shutdownMinutes,
-        },
+        environment: watchdogEnv,
         logging: config.debug
           ? new ecs.AwsLogDriver({
               logRetention: logs.RetentionDays.THREE_DAYS,

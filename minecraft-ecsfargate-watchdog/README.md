@@ -1,4 +1,12 @@
 # Minecraft ECS Fargate Watchdog
+From jimmie:
+
+I've changed the Watchdog to work with the [Watchpup Minecraft plugin for Fabric](https://github.com/j1mmie/minecraft-watchpup-fabric). This allows the watchdog to be more agnostic about Java vs Bedrock, and it's more reliable because it doesn't resort to spoofing the client or other weird stuff.
+
+Bellow is the old documentation:
+
+# Old docs
+
 This document is a work in progress but is meant to document the container, its changes, and testing methods
 
 ## Changelog
