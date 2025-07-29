@@ -309,6 +309,10 @@ while [ $POLL_COUNT -le "$MAX_POLL_COUNT" ]; do
   CURRENT_MINUTE=$(get_minute_of_poll "$POLL_COUNT" "$POLL_FREQ_SECS")
   PLAYERS_CONNECTED=$(get_active_connection_count)
 
+  if ! is_valid_connection_value "$PLAYERS_CONNECTED"; then
+    PLAYERS_CONNECTED=0
+  fi
+
   if [ "$PLAYERS_CONNECTED" -lt 1 ]; then
     echo "No active connections detected, poll $POLL_COUNT / $MAX_POLL_COUNT, minute $CURRENT_MINUTE / $SHUTDOWNMIN..."
     POLL_COUNT=$((POLL_COUNT + 1))
